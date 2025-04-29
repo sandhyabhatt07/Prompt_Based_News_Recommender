@@ -31,6 +31,9 @@ The application employs sophisticated prompt engineering techniques to optimize 
 - **Output Formatting**: Strict output structure requirements ensure consistent, parseable responses.
 - **Constraints & Examples**: Clear constraints and examples help the model generate properly formatted outputs.
 
+  ## Demo:
+  ![Demo Video](assets/demo3.gif)
+
 Example prompt structure:
 ```python
 prompt = f"""
