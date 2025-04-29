@@ -32,7 +32,7 @@ The application employs sophisticated prompt engineering techniques to optimize 
 - **Constraints & Examples**: Clear constraints and examples help the model generate properly formatted outputs.
 
   ## Demo:
-  ![Demo Video](assets/demo3.gif)
+  ![Demo Video](assets/Demo3.gif)
 
 Example prompt structure:
 ```python
