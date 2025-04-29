@@ -1,5 +1,5 @@
 """
-recommender.py - Improved News Recommendation Module using Google's Gemini API
+recommender.py - Improved News Recommendation Module with Video Recommendations using Google's Gemini API
 """
 
 import os
@@ -10,10 +10,13 @@ import feedparser
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import re
+import requests
+from urllib.parse import urlencode
 
 # Load API Key
 load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")  # Add YouTube API key to your .env file
 
 # Function to fetch and clean RSS feed articles
 def fetch_rss_articles(feed_url):
@@ -30,13 +33,108 @@ def fetch_rss_articles(feed_url):
             articles.append({
                 "title": entry.title,
                 "content": clean_content,
-                "link": entry.link
+                "link": entry.link,
+                "source": feed.feed.get('title', 'Unknown Source')
             })
                 
         return articles
     except Exception as e:
         print(f"Error fetching {feed_url}: {e}")
         return []
+
+# Function to fetch related videos from YouTube
+def fetch_youtube_videos(query, max_results=5):
+    """Fetch related videos from YouTube API"""
+    if not YOUTUBE_API_KEY:
+        print("YouTube API Key not found in environment variables")
+        return []
+        
+    try:
+        base_url = "https://www.googleapis.com/youtube/v3/search"
+        params = {
+            'part': 'snippet',
+            'q': query,
+            'type': 'video',
+            'maxResults': max_results,
+            'key': YOUTUBE_API_KEY,
+            'relevanceLanguage': 'en'
+        }
+        
+        response = requests.get(f"{base_url}?{urlencode(params)}")
+        if response.status_code != 200:
+            print(f"YouTube API error: {response.status_code}")
+            print(response.text)
+            return []
+            
+        results = response.json()
+        videos = []
+        
+        for item in results.get('items', []):
+            video_id = item['id']['videoId']
+            videos.append({
+                "title": item['snippet']['title'],
+                "description": item['snippet']['description'],
+                "thumbnail": item['snippet']['thumbnails']['medium']['url'],
+                "video_id": video_id,
+                "link": f"https://www.youtube.com/watch?v={video_id}"
+            })
+            
+        return videos
+    except Exception as e:
+        print(f"Error fetching videos: {e}")
+        return []
+
+# Function to get video recommendations based on keywords without API (fallback method)
+def get_alternative_video_recommendations(article_title, article_content):
+    """Generate relevant search queries and structure as video recommendations"""
+    # Use Gemini to extract key search terms
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    
+    prompt = f"""
+    Extract 3-5 most important search keywords or phrases from this news article that would be good for finding related videos.
+    
+    ARTICLE TITLE: {article_title}
+    ARTICLE CONTENT: {article_content[:500]}
+    
+    Return only a JSON array of strings with no additional text or explanation.
+    Example output: ["keyword1", "keyword2", "keyword phrase 3"]
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        cleaned_response = clean_gemini_response(response.text)
+        keywords = json.loads(cleaned_response)
+        
+        if not isinstance(keywords, list) or len(keywords) == 0:
+            keywords = [article_title]
+        
+        # If we have YouTube API key, use it
+        if YOUTUBE_API_KEY:
+            # Use the first keyword which should be the most relevant
+            return fetch_youtube_videos(keywords[0])
+        else:
+            # Create structured placeholder data that directs to YouTube search
+            video_recommendations = []
+            for keyword in keywords[:5]:
+                search_query = urlencode({'search_query': keyword})
+                video_recommendations.append({
+                    "title": f"Videos about: {keyword}",
+                    "description": f"Search results for {keyword}",
+                    "thumbnail": "https://www.youtube.com/img/desktop/yt_1200.png",  # YouTube logo as placeholder
+                    "link": f"https://www.youtube.com/results?{search_query}"
+                })
+            return video_recommendations
+            
+    except Exception as e:
+        print(f"Error generating video recommendations: {e}")
+        # Fallback to basic article title search
+        search_query = urlencode({'search_query': article_title})
+        return [{
+            "title": f"Videos about: {article_title}",
+            "description": "Related videos on YouTube",
+            "thumbnail": "https://www.youtube.com/img/desktop/yt_1200.png",
+            "link": f"https://www.youtube.com/results?{search_query}"
+        }]
 
 # RSS Feed URLs
 RSS_FEEDS = [
@@ -112,11 +210,11 @@ def get_gemini_recommendations(article_title, article_content, news_df):
 
     # EXAMPLE OUTPUT:
     [
-      {"title": "Example Article 1", "link": "https://example.com/1"},
-      {"title": "Example Article 2", "link": "https://example.com/2"},
-      {"title": "Example Article 3", "link": "https://example.com/3"},
-      {"title": "Example Article 4", "link": "https://example.com/4"},
-      {"title": "Example Article 5", "link": "https://example.com/5"}
+      {{"title": "Example Article 1", "link": "https://example.com/1"}},
+      {{"title": "Example Article 2", "link": "https://example.com/2"}},
+      {{"title": "Example Article 3", "link": "https://example.com/3"}},
+      {{"title": "Example Article 4", "link": "https://example.com/4"}},
+      {{"title": "Example Article 5", "link": "https://example.com/5"}}
     ]
     """
 
@@ -172,17 +270,34 @@ if __name__ == "__main__":
             first_article = news_df.iloc[0]
             print(f"\n🔍 Finding recommendations for: {first_article['title']}")
             
-            recommendations = get_gemini_recommendations(
+            # Get article recommendations
+            article_recommendations = get_gemini_recommendations(
                 first_article["title"], 
                 first_article["content"], 
                 news_df
             )
             
-            if recommendations:
+            if article_recommendations:
                 print("\n🔹 Recommended Articles:")
-                for i, rec in enumerate(recommendations, 1):
+                for i, rec in enumerate(article_recommendations, 1):
                     print(f"{i}. {rec['title']}")
                     print(f"   Link: {rec['link']}")
                     print()
             else:
-                print("❌ No recommendations found.")
+                print("❌ No article recommendations found.")
+                
+            # Get video recommendations
+            print(f"\n🎬 Finding related videos for: {first_article['title']}")
+            video_recommendations = get_alternative_video_recommendations(
+                first_article["title"],
+                first_article["content"]
+            )
+            
+            if video_recommendations:
+                print("\n🔹 Related Videos:")
+                for i, video in enumerate(video_recommendations, 1):
+                    print(f"{i}. {video['title']}")
+                    print(f"   Link: {video['link']}")
+                    print()
+            else:
+                print("❌ No video recommendations found.")
